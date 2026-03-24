@@ -178,7 +178,19 @@ export class ApiDmWeb {
     constructor(private aid: number, private cid: number) {
         ApiDmWeb.Root || ApiDmWeb.RootInit();
     }
-    /** 获取新版弹幕 */
+    /**
+     * 获取新版弹幕（`DanmakuElem[]`）
+     *
+     * 转换前：Bilibili 弹幕 API 返回的 protobuf 二进制数据（`ArrayBuffer`）  
+     * 转换后：解码为 `DanmakuElem[]` JS 对象数组，按弹幕 ID 从小到大排序
+     *
+     * 转换流程：
+     * 1. 请求 `DM_WEB_VIEW` 获取弹幕元信息（分包数量、高级弹幕链接等）
+     * 2. 根据分包数量并发请求 `DM_WEB_SEG_SO` 获取各分包弹幕二进制数据
+     * 3. 通过 `DmSegMobileReply.decode` 将 protobuf 二进制解码为 `Message` 对象
+     * 4. 通过 `DmSegMobileReply.toObject` 转为普通 JS 对象（`DanmakuElem[]`）
+     * 5. 合并所有分包后按 ID 排序
+     */
     async getData() {
         if (!this.danmaku.length) {
             const dmWebView = await this.DmWebViewReply();
@@ -212,12 +224,62 @@ export class ApiDmWeb {
         }
         return this.danmaku;
     }
-    /** 获取旧版弹幕 */
+    /**
+     * 获取旧版弹幕（`DanmakuCmd[]`）
+     *
+     * 这是完整的弹幕格式转换管道：
+     *
+     * 转换前（protobuf 二进制，来自 Bilibili 弹幕 API）：
+     * ```
+     * <ArrayBuffer: protobuf 编码的 DmSegMobileReply>
+     * ```
+     *
+     * 中间态（`DanmakuElem[]`，由 `getData()` 输出）：
+     * ```json
+     * [
+     *   {
+     *     "id": 123456,
+     *     "progress": 3000,
+     *     "mode": 1,
+     *     "fontsize": 25,
+     *     "color": 16777215,
+     *     "midHash": "a1b2c3d4",
+     *     "content": "弹幕内容",
+     *     "ctime": 1609459200,
+     *     "pool": 0,
+     *     "idStr": "123456"
+     *   }
+     * ]
+     * ```
+     *
+     * 转换后（`DanmakuCmd[]`，旧版播放器所需格式，由 `DanmakuBase.parseCmd()` 输出）：
+     * ```json
+     * [
+     *   {
+     *     "class": 0,
+     *     "pool": 0,
+     *     "color": 16777215,
+     *     "date": 1609459200,
+     *     "dmid": "123456",
+     *     "mode": 1,
+     *     "size": 25,
+     *     "stime": 3,
+     *     "text": "弹幕内容",
+     *     "uhash": "a1b2c3d4",
+     *     "uid": "a1b2c3d4"
+     *   }
+     * ]
+     * ```
+     */
     async toCmd() {
         const danmaku = await this.getData();
         return DanmakuBase.parseCmd(danmaku);
     }
-    /** 获取弹幕分包 */
+    /**
+     * 获取弹幕视图信息（分包配置、高级弹幕链接等）
+     *
+     * 转换前：protobuf 二进制（`ArrayBuffer`）→ 转换后：`DmWebViewReply` JS 对象
+     */
     private async DmWebViewReply() {
         const response = await fetch(objUrl(URLS.DM_WEB_VIEW, {
             type: 1,
@@ -228,7 +290,12 @@ export class ApiDmWeb {
         const msg = ApiDmWeb.DmWebViewReply.decode(new Uint8Array(arraybuffer));
         return <DmWebViewReply>ApiDmWeb.DmWebViewReply.toObject(msg);
     }
-    /** 获取弹幕分包 */
+    /**
+     * 获取弹幕分包数据
+     *
+     * 转换前：protobuf 二进制（`ArrayBuffer`）→ 转换后：`DmSegMobileReply` JS 对象（含 `elems: DanmakuElem[]`）
+     * @param segment_index 分包索引，从 1 开始
+     */
     private async DmSegMobileReply(segment_index: number = 1) {
         const response = await fetch(objUrl(URLS.DM_WEB_SEG_SO, {
             type: 1,
@@ -240,7 +307,12 @@ export class ApiDmWeb {
         const msg = ApiDmWeb.DmSegMobileReply.decode(new Uint8Array(arraybuffer));
         return <DmSegMobileReply>ApiDmWeb.DmSegMobileReply.toObject(msg);
     }
-    /** 获取高级弹幕 */
+    /**
+     * 获取高级弹幕（BFS 存储的 protobuf 文件）
+     *
+     * 转换前：protobuf 二进制（`ArrayBuffer`）→ 转换后：`DmSegMobileReply` JS 对象（含 `elems: DanmakuElem[]`）
+     * @param url 高级弹幕的 BFS 文件地址
+     */
     private async specialDm(url: string) {
         const response = await fetch(url);
         const arraybuffer = await response.arrayBuffer();

@@ -47,14 +47,41 @@ export abstract class BAPIMetadata {
         accessKey && (this.metadata.accessKey = accessKey);
     }
     /**
-     * 发起grpc请求  
-     * - T 用于序列化请求参数的Type类型  
-     * - K 用于反序列化返回值的Type类型
+     * 发起 gRPC 请求，完成请求序列化与响应反序列化
+     *
+     * **转换前（请求，JS 普通对象 `T`）**：
+     * ```json
+     * { "aid": 170001, "cid": 280793, "qn": 80, "fnval": 16 }
+     * ```
+     * 序列化流程：
+     * 1. `typeReq.fromObject(req)` → protobuf `Message<T>` 对象
+     * 2. `typeReq.encode(...).finish()` → protobuf 二进制 `Uint8Array`
+     * 3. `gzipSync(...)` → gzip 压缩后的 `Uint8Array`
+     * 4. 在首部拼接 5 字节的 gRPC 帧头（1 字节压缩标记 `0x01` + 4 字节体长度）→ `ArrayBuffer`
+     *
+     * **转换后（响应，JS 普通对象 `K`）**：
+     * ```json
+     * {
+     *   "code": 0,
+     *   "data": {
+     *     "quality": 80,
+     *     "dash": { "video": [...], "audio": [...] }
+     *   }
+     * }
+     * ```
+     * 反序列化流程：
+     * 1. 从响应体中剥离首部 5 字节 gRPC 帧头 → `Uint8Array`
+     * 2. 若响应头 `grpc-encoding: gzip`，则 `gunzipSync(...)` 解压
+     * 3. `typeReply.decode(...)` → protobuf `Message<K>` 对象
+     * 4. `typeReply.toObject(...)` → 普通 JS 对象 `K`
+     *
+     * - T 用于序列化请求参数的 Type 类型
+     * - K 用于反序列化返回值的 Type 类型
      * @param method 请求方法名
-     * @param repType 用于序列化请求参数的Type名
-     * @param replyType 用于反序列化返回值的Type名
+     * @param repType 用于序列化请求参数的 Type 名
+     * @param replyType 用于反序列化返回值的 Type 名
      * @param req 序列化前的请求参数
-     * @returns 请求返回值
+     * @returns 反序列化后的响应对象
      */
     protected async request<T extends object, K extends object>(method: string, repType: string, replyType: string, req: T) {
         const typeReq = this.lookupType<T>(repType);
